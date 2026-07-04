@@ -1,5 +1,7 @@
 # REPLAYDESK — prop evaluation simulator
 
+**Live: https://swingswipe.github.io/replaydesk/**
+
 FX Replay-style bar replay + a Topstep/Lucid-style prop rules engine, in one static web app.
 You replay historical 1-minute data candle by candle, take trades like it's live, and the desk
 enforces real evaluation rules against you: trailing max drawdown, daily loss limit, profit
