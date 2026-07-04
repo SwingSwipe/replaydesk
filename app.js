@@ -381,7 +381,7 @@ function refreshPriceLines(){
    is synthetic but seeded at trailing swing highs/lows and round
    numbers, so it correlates with structure without peeking ahead.
    ============================================================ */
-const VIEWS = { vol:true, flow:false, map:false, foot:false, lvls:false, snd:true };
+const VIEWS = { vol:true, flow:true, map:false, foot:false, lvls:false, snd:true };
 
 /* ---------- fill sounds ---------- */
 let _ac = null;
