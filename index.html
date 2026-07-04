@@ -198,9 +198,21 @@
           <span class="lbl" id="barCounter">0 / 0</span>
         </div>
       </div>
-      <div id="chartWrap">
-        <div id="chart"></div>
-        <canvas id="bmCanvas"></canvas>
+      <div class="chart-row">
+        <div class="tools-rail" id="toolsRail">
+          <button data-tool="" class="active" title="Cursor — pan/zoom chart">✛</button>
+          <button data-tool="trend" title="Trendline (2 clicks)">╱</button>
+          <button data-tool="hline" title="Horizontal level (1 click)">─</button>
+          <button data-tool="rect" title="Box — order blocks, FVGs (2 clicks)">▭</button>
+          <button data-tool="fib" title="Fib retracement w/ OTE levels (2 clicks)">Ⅎ</button>
+          <button data-tool="erase" title="Eraser — click a drawing to delete">⌫</button>
+          <button id="btnClearDraw" title="Clear all drawings">🗑</button>
+        </div>
+        <div id="chartWrap">
+          <div id="chart"></div>
+          <canvas id="bmCanvas"></canvas>
+          <canvas id="drawCanvas"></canvas>
+        </div>
       </div>
     </section>
 

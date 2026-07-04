@@ -230,12 +230,13 @@ function initChart(){
   chart.priceScale('flow').applyOptions({ scaleMargins:{ top:0.74, bottom:0.15 } });
   cvdSeries = chart.addLineSeries({ priceScaleId:'cvd', color:'#4da3ff', lineWidth:1, lastValueVisible:false, priceLineVisible:false, crosshairMarkerVisible:false });
   chart.priceScale('cvd').applyOptions({ scaleMargins:{ top:0.56, bottom:0.32 } });
-  chart.timeScale().subscribeVisibleTimeRangeChange(()=>{ if (VIEWS.map || VIEWS.foot) queueBookmap(); });
+  chart.timeScale().subscribeVisibleTimeRangeChange(()=>{ if (VIEWS.map || VIEWS.foot) queueBookmap(); queueDraw(); });
   // click chart → prefill resting-order price (drag/pan is ignored)
   const wrap = $('chartWrap');
   let _cd = null;
   wrap.onpointerdown = e => { _cd = { x:e.clientX, y:e.clientY, t:performance.now() }; };
   wrap.onpointerup = e => {
+    if (DRAW.tool){ _cd = null; return; }          // a drawing tool owns the click
     if (!_cd) return;
     const moved = Math.hypot(e.clientX-_cd.x, e.clientY-_cd.y);
     const held = performance.now() - _cd.t;
@@ -666,6 +667,175 @@ function applyViews(){
   refreshLevelLines();
   queueBookmap();
   if (VIEWS.flow) renderFlowPanel();
+}
+
+/* ============================================================
+   DRAWING TOOLS (TradingView-style rail)
+   Drawings live in raw-time/price space, so they survive zoom,
+   pan, timeframe switches and session reloads.
+   ============================================================ */
+const DRAW = { tool:null, drawings:[], pending:null, mouse:null };
+
+function tToLogical(t){
+  const agg = S.chartAgg;
+  if (!agg || !agg.length) return null;
+  const bt = t - (t % S.tf);
+  if (bt <= agg[0].rawT) return (bt - agg[0].rawT)/S.tf;
+  const last = agg[agg.length-1];
+  if (bt >= last.rawT) return agg.length-1 + (bt - last.rawT)/S.tf;
+  let lo=0, hi=agg.length-1;
+  while (lo<hi){ const m=(lo+hi+1)>>1; if (agg[m].rawT<=bt) lo=m; else hi=m-1; }
+  return lo;
+}
+function xForT(t){
+  const l = tToLogical(t);
+  return l===null ? null : chart.timeScale().logicalToCoordinate(l);
+}
+function tForX(x){
+  const l = chart.timeScale().coordinateToLogical(x);
+  const agg = S.chartAgg;
+  if (l===null || !agg || !agg.length) return null;
+  const i = Math.max(0, Math.min(agg.length-1, Math.round(l)));
+  return agg[i].rawT + (l-i)*S.tf;
+}
+
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 1];   // includes ICT OTE band
+
+let _drawQueued = false;
+function queueDraw(){ if (_drawQueued) return; _drawQueued = true; requestAnimationFrame(()=>{ _drawQueued=false; drawDrawings(); }); }
+
+function drawDrawings(){
+  const cv = $('drawCanvas'), wrap = $('chartWrap');
+  if (!cv || !chart) return;
+  const dpr = window.devicePixelRatio||1;
+  cv.width = wrap.clientWidth*dpr; cv.height = wrap.clientHeight*dpr;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if (!DRAW.drawings.length && !DRAW.pending) return;
+  ctx.font = `${9.5*dpr}px 'IBM Plex Mono', monospace`;
+  const W = cv.width;
+  const one = (d, preview) => {
+    ctx.globalAlpha = preview ? 0.65 : 1;
+    const y1 = series.priceToCoordinate(d.p1);
+    if (d.type === 'hline'){
+      if (y1===null) return;
+      ctx.strokeStyle = '#ffb000'; ctx.lineWidth = dpr; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(0, y1*dpr); ctx.lineTo(W, y1*dpr); ctx.stroke();
+      ctx.fillStyle = '#ffb000';
+      ctx.fillText(fmtPx(d.p1), 6*dpr, (y1-4)*dpr);
+      return;
+    }
+    const x1 = xForT(d.t1), x2 = xForT(d.t2), y2 = series.priceToCoordinate(d.p2);
+    if (x1===null || x2===null || y1===null || y2===null) return;
+    if (d.type === 'trend'){
+      ctx.strokeStyle = '#4da3ff'; ctx.lineWidth = 1.4*dpr; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x1*dpr, y1*dpr); ctx.lineTo(x2*dpr, y2*dpr); ctx.stroke();
+    } else if (d.type === 'rect'){
+      const x = Math.min(x1,x2), y = Math.min(y1,y2), w = Math.abs(x2-x1), h = Math.abs(y2-y1);
+      ctx.fillStyle = 'rgba(255,176,0,.10)';
+      ctx.fillRect(x*dpr, y*dpr, w*dpr, h*dpr);
+      ctx.strokeStyle = 'rgba(255,176,0,.55)'; ctx.lineWidth = dpr; ctx.setLineDash([]);
+      ctx.strokeRect(x*dpr, y*dpr, w*dpr, h*dpr);
+    } else if (d.type === 'fib'){
+      const xa = Math.min(x1,x2), xb = Math.max(x1,x2);
+      for (const lvl of FIB_LEVELS){
+        const p = d.p1 + (d.p2-d.p1)*lvl;
+        const y = series.priceToCoordinate(p);
+        if (y===null) continue;
+        const ote = lvl===0.618 || lvl===0.705 || lvl===0.786;
+        ctx.strokeStyle = ote ? 'rgba(255,176,0,.8)' : 'rgba(107,118,136,.6)';
+        ctx.lineWidth = dpr; ctx.setLineDash(ote ? [] : [4*dpr,4*dpr]);
+        ctx.beginPath(); ctx.moveTo(xa*dpr, y*dpr); ctx.lineTo(xb*dpr, y*dpr); ctx.stroke();
+        ctx.fillStyle = ote ? '#ffb000' : '#6b7688';
+        ctx.fillText(`${lvl} ${fmtPx(p)}`, (xb+5)*dpr, (y+3)*dpr);
+      }
+      ctx.setLineDash([]);
+    }
+  };
+  for (const d of DRAW.drawings) one(d, false);
+  if (DRAW.pending && DRAW.mouse){
+    const m = DRAW.mouse;
+    one({ type:DRAW.tool, t1:DRAW.pending.t, p1:DRAW.pending.p, t2:m.t, p2:m.p }, true);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function hitTest(x, y){
+  const d2seg = (px,py,x1,y1,x2,y2) => {
+    const dx=x2-x1, dy=y2-y1, len2=dx*dx+dy*dy;
+    const u = len2 ? Math.max(0, Math.min(1, ((px-x1)*dx+(py-y1)*dy)/len2)) : 0;
+    return Math.hypot(px-(x1+u*dx), py-(y1+u*dy));
+  };
+  for (let i=DRAW.drawings.length-1; i>=0; i--){
+    const d = DRAW.drawings[i];
+    const y1 = series.priceToCoordinate(d.p1);
+    if (d.type === 'hline'){ if (y1!==null && Math.abs(y-y1)<6) return i; continue; }
+    const x1 = xForT(d.t1), x2 = xForT(d.t2), y2 = series.priceToCoordinate(d.p2);
+    if (x1===null||x2===null||y1===null||y2===null) continue;
+    if (d.type === 'trend' && d2seg(x,y,x1,y1,x2,y2) < 6) return i;
+    if (d.type === 'rect' && x>Math.min(x1,x2)-4 && x<Math.max(x1,x2)+4 && y>Math.min(y1,y2)-4 && y<Math.max(y1,y2)+4) return i;
+    if (d.type === 'fib'){
+      for (const lvl of FIB_LEVELS){
+        const yl = series.priceToCoordinate(d.p1 + (d.p2-d.p1)*lvl);
+        if (yl!==null && Math.abs(y-yl)<5 && x>Math.min(x1,x2)-4 && x<Math.max(x1,x2)+40) return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function setTool(tool){
+  DRAW.tool = tool || null;
+  DRAW.pending = null; DRAW.mouse = null;
+  const dc = $('drawCanvas');
+  dc.style.pointerEvents = DRAW.tool ? 'auto' : 'none';
+  dc.style.cursor = DRAW.tool === 'erase' ? 'not-allowed' : DRAW.tool ? 'crosshair' : 'default';
+  document.querySelectorAll('#toolsRail button[data-tool]').forEach(b=>b.classList.toggle('active', (b.dataset.tool||null) === DRAW.tool));
+  queueDraw();
+}
+
+function wireDrawing(){
+  document.querySelectorAll('#toolsRail button[data-tool]').forEach(b=>
+    b.addEventListener('click', ()=> setTool(b.dataset.tool || null)));
+  $('btnClearDraw').addEventListener('click', ()=>{
+    DRAW.drawings = []; queueDraw(); saveState();
+    toast('All drawings cleared');
+  });
+  const dc = $('drawCanvas');
+  const evPt = e => {
+    const r = dc.getBoundingClientRect();
+    const x = e.clientX-r.left, y = e.clientY-r.top;
+    const t = tForX(x), p = series.coordinateToPrice(y);
+    return (t===null || p===null || !isFinite(p)) ? null : { x, y, t: Math.round(t), p };
+  };
+  dc.addEventListener('pointerdown', e=>{
+    if (!DRAW.tool) return;
+    const pt = evPt(e);
+    if (!pt) return;
+    if (DRAW.tool === 'erase'){
+      const hit = hitTest(pt.x, pt.y);
+      if (hit >= 0){ DRAW.drawings.splice(hit,1); queueDraw(); saveState(); toast('Drawing deleted'); }
+      return;
+    }
+    if (DRAW.tool === 'hline'){
+      DRAW.drawings.push({ type:'hline', p1: Math.round(pt.p/SPEC().tick)*SPEC().tick });
+      setTool(null); saveState();
+      return;
+    }
+    if (!DRAW.pending){ DRAW.pending = { t:pt.t, p:pt.p }; DRAW.mouse = pt; queueDraw(); }
+    else {
+      DRAW.drawings.push({ type:DRAW.tool, t1:DRAW.pending.t, p1:DRAW.pending.p, t2:pt.t, p2:pt.p });
+      setTool(null); saveState();
+    }
+  });
+  dc.addEventListener('pointermove', e=>{
+    if (!DRAW.tool || !DRAW.pending) return;
+    const pt = evPt(e);
+    if (pt){ DRAW.mouse = pt; queueDraw(); }
+  });
+  document.addEventListener('keydown', e=>{
+    if (e.code === 'Escape' && DRAW.tool) setTool(null);
+  });
 }
 
 /* ============================================================
@@ -1103,6 +1273,7 @@ function renderNow(){
   updateLiqLine();
   if (VIEWS.flow) renderFlowPanel();
   if (VIEWS.map || VIEWS.foot) queueBookmap();
+  if (DRAW.drawings.length || DRAW.pending) queueDraw();
   if (VIEWS.lvls && S.levels && S.levels.dirty) refreshLevelLines();
   $('buyPx').textContent = fmtPx(S.price);
   $('sellPx').textContent = fmtPx(S.price);
@@ -1327,6 +1498,7 @@ function saveState(){
   try{
     const data = { cfg:CFG, acct:{...acct, eqSeries:acct.eqSeries.slice(-4000)}, replay:{idx:S.idx, sub:S.sub, tf:S.tf}, markers:S.markers.slice(-400),
       views:{...VIEWS}, open:{ pos:{...pos}, orders:orders.map(o=>({...o})), openTrade: openTrade?{...openTrade}:null, nextOrdId },
+      drawings: DRAW.drawings.slice(-200),
       bars:S.bars.map(b=>[b.t,b.o,b.h,b.l,b.c,b.v]) };
     localStorage.setItem(LS_KEY, JSON.stringify(data));
   }catch(e){ /* quota — drop bars */
@@ -1376,6 +1548,8 @@ function startSession(cfg, bars, resume){
   $('symChip').textContent = SPEC().name;
   document.querySelectorAll('#tfGroup button').forEach(b=>b.classList.toggle('active', +b.dataset.tf===S.tf));
 
+  DRAW.drawings = resume?.drawings || [];
+  DRAW.pending = null;
   flowReset();
   ensureFlow(S.idx-1);
   warmLevels();
@@ -1667,3 +1841,4 @@ function wireApp(){
 
 wireSetup();
 wireApp();
+wireDrawing();
