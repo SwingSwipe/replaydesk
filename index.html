@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REPLAYDESK · Prop Evaluation Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+<!-- ================= SETUP MODAL ================= -->
+<div id="setupModal" class="modal-backdrop">
+  <div class="setup-card">
+    <div class="setup-head">
+      <div class="brand-mark">RD</div>
+      <div>
+        <h1>REPLAYDESK</h1>
+        <p class="tagline">PROP EVALUATION SIMULATOR — TRADE THE PAST LIKE IT'S LIVE</p>
+      </div>
+    </div>
+
+    <div class="setup-grid">
+      <!-- Account rules -->
+      <section class="setup-section">
+        <h2>01 / EVALUATION RULES</h2>
+        <label class="fld">
+          <span>FIRM PRESET</span>
+          <select id="cfgPreset">
+            <option value="topstep50">Topstep 50K Combine</option>
+            <option value="topstep100" selected>Topstep 100K Combine</option>
+            <option value="topstep150">Topstep 150K Combine</option>
+            <option value="lucid50">Lucid-style 50K (EOD trail)</option>
+            <option value="lucid100">Lucid-style 100K (EOD trail)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <div class="fld-row">
+          <label class="fld"><span>START BALANCE $</span><input id="cfgBalance" type="number" value="100000"></label>
+          <label class="fld"><span>PROFIT TARGET $</span><input id="cfgTarget" type="number" value="6000"></label>
+        </div>
+        <div class="fld-row">
+          <label class="fld"><span>MAX DRAWDOWN $</span><input id="cfgMaxDD" type="number" value="3000"></label>
+          <label class="fld"><span>DAILY LOSS $ <em>(0 = none)</em></span><input id="cfgDLL" type="number" value="2000"></label>
+        </div>
+        <div class="fld-row">
+          <label class="fld"><span>DRAWDOWN MODE</span>
+            <select id="cfgDDMode">
+              <option value="intraday">Intraday trailing (Topstep)</option>
+              <option value="eod">End-of-day trailing (Lucid)</option>
+              <option value="static">Static</option>
+            </select>
+          </label>
+          <label class="fld"><span>DLL BREACH</span>
+            <select id="cfgDLLAction">
+              <option value="fail">Fails account</option>
+              <option value="lock">Locks day only</option>
+            </select>
+          </label>
+        </div>
+        <div class="fld-row">
+          <label class="fld"><span>MAX CONTRACTS</span><input id="cfgMaxCts" type="number" value="10"></label>
+          <label class="fld"><span>COMMISSION $/side/ct</span><input id="cfgComm" type="number" step="0.01" value="1.55"></label>
+        </div>
+        <div class="fld-row">
+          <label class="fld"><span>MIN TRADING DAYS</span><input id="cfgMinDays" type="number" value="2"></label>
+          <label class="fld"><span>CONSISTENCY MAX % <em>(0 = off)</em></span><input id="cfgConsis" type="number" value="50"></label>
+          <label class="fld"><span>SLIPPAGE ticks</span><input id="cfgSlip" type="number" value="0"></label>
+        </div>
+        <label class="chk"><input id="cfgDDLock" type="checkbox" checked><span>Trailing drawdown locks once it reaches start balance</span></label>
+        <div class="fld-row">
+          <label class="fld"><span>TRADE WINDOW — NY TIME <em>(discipline filter)</em></span>
+            <div class="timewrap">
+              <input id="cfgSessStart" type="time" value="09:30">
+              <span class="lbl">to</span>
+              <input id="cfgSessEnd" type="time" value="11:00">
+            </div>
+          </label>
+        </div>
+        <label class="chk"><input id="cfgSessOn" type="checkbox"><span>Block entries outside the window</span></label>
+        <label class="chk"><input id="cfgSessFlat" type="checkbox"><span>Auto-flatten when the window closes</span></label>
+      </section>
+
+      <!-- Instrument + data -->
+      <section class="setup-section">
+        <h2>02 / INSTRUMENT &amp; DATA</h2>
+        <label class="fld">
+          <span>INSTRUMENT</span>
+          <select id="cfgInstrument">
+            <option value="NQ" selected>NQ — E-mini Nasdaq ($20/pt, 0.25 tick)</option>
+            <option value="MNQ">MNQ — Micro Nasdaq ($2/pt)</option>
+            <option value="ES">ES — E-mini S&amp;P ($50/pt)</option>
+            <option value="MES">MES — Micro S&amp;P ($5/pt)</option>
+            <option value="CL">CL — Crude Oil ($1000/pt, 0.01 tick)</option>
+            <option value="GC">GC — Gold ($100/pt, 0.10 tick)</option>
+            <option value="BTC">BTCUSDT — Crypto (1 unit = $1/pt)</option>
+            <option value="ETH">ETHUSDT — Crypto</option>
+          </select>
+        </label>
+
+        <div class="src-tabs" id="srcTabs">
+          <button class="src-tab active" data-src="demo">DEMO DATA</button>
+          <button class="src-tab" data-src="binance">BINANCE 1m</button>
+          <button class="src-tab" data-src="file">IMPORT FILE</button>
+        </div>
+
+        <div class="src-pane" id="srcPane-demo">
+          <p class="hint">Synthetic NQ-style 1-minute data, ten trading days. Zero setup — good for learning the desk. Use Binance or an import for real price action.</p>
+          <label class="fld"><span>RANDOM SEED</span><input id="cfgSeed" type="number" value="7"></label>
+        </div>
+
+        <div class="src-pane hidden" id="srcPane-binance">
+          <p class="hint">Real 1-minute candles pulled straight from Binance (no key needed). Pick BTC/ETH as instrument, or replay crypto price action with futures-style dollar math.</p>
+          <div class="fld-row">
+            <label class="fld"><span>START DATE</span><input id="cfgBnStart" type="date"></label>
+            <label class="fld"><span>DAYS</span><input id="cfgBnDays" type="number" value="7" min="1" max="30"></label>
+          </div>
+        </div>
+
+        <div class="src-pane hidden" id="srcPane-file">
+          <p class="hint">CSV or JSON of 1-minute bars — TradingView export format works (<code>time,open,high,low,close,volume</code>), or run <code>fetch_nq.py</code> in this folder to pull recent NQ data.</p>
+          <input id="cfgFile" type="file" accept=".csv,.json,.txt">
+          <div id="fileStatus" class="hint"></div>
+        </div>
+
+        <div class="fld-row">
+          <label class="fld"><span>REPLAY STARTS AT</span>
+            <select id="cfgStartPos">
+              <option value="0.15">Early in the data (15%)</option>
+              <option value="0.3" selected>30% in</option>
+              <option value="0.5">Halfway</option>
+              <option value="0.7">70% in</option>
+            </select>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <div class="setup-foot">
+      <div id="resumeSlot"></div>
+      <button id="btnLaunch" class="btn-launch">INITIALIZE EVALUATION →</button>
+    </div>
+    <div id="setupError" class="setup-error hidden"></div>
+  </div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app" class="app hidden">
+
+  <!-- top bar -->
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark sm">RD</span> REPLAYDESK</div>
+    <div class="top-chip" id="symChip">NQ</div>
+    <div class="top-clock" id="clock">— — —</div>
+    <div class="top-stats">
+      <div class="tstat"><span class="lbl">EQUITY</span><span class="val" id="tEquity">$0</span></div>
+      <div class="tstat"><span class="lbl">DAY P&amp;L</span><span class="val" id="tDayPnl">$0</span></div>
+      <div class="tstat"><span class="lbl">TO LIQUIDATION</span><span class="val" id="tToMLL">$0</span></div>
+      <div class="tstat"><span class="lbl">TARGET</span><span class="val" id="tTarget">0%</span></div>
+    </div>
+    <div class="acct-status" id="acctStatus">ACTIVE</div>
+    <button class="btn-ghost" id="btnNewSession" title="New session / settings">⟲ NEW</button>
+  </header>
+
+  <!-- main -->
+  <main class="main">
+    <section class="chart-zone">
+      <div class="chart-toolbar">
+        <div class="tf-group" id="tfGroup">
+          <button data-tf="60">1m</button>
+          <button data-tf="300" class="active">5m</button>
+          <button data-tf="900">15m</button>
+          <button data-tf="3600">1h</button>
+        </div>
+        <div class="tf-group view-group" id="viewGroup" title="VOL volume · FLOW delta/CVD/tape · MAP liquidity heatmap · LVLS prior day H/L + midnight open">
+          <button data-view="vol" class="active">VOL</button>
+          <button data-view="flow">FLOW</button>
+          <button data-view="map">MAP</button>
+          <button data-view="foot">FOOT</button>
+          <button data-view="lvls">LVLS</button>
+          <button data-view="snd" class="active">SND</button>
+        </div>
+        <div class="replay-controls">
+          <button id="btnPlay" class="rc-btn primary" title="Space">▶ PLAY</button>
+          <button id="btnStep" class="rc-btn" title="→ : one bar">STEP +1</button>
+          <button id="btnSkip" class="rc-btn" title="Jump to the next session open (orders still fill on the way)">SKIP ▶▶</button>
+          <div class="speed-group" id="speedGroup">
+            <span class="lbl">SPEED</span>
+            <button data-spd="1" class="active">1×</button>
+            <button data-spd="3">3×</button>
+            <button data-spd="10">10×</button>
+            <button data-spd="30">30×</button>
+          </div>
+          <div class="replay-progress"><div id="replayProgressFill"></div></div>
+          <span class="lbl" id="barCounter">0 / 0</span>
+        </div>
+      </div>
+      <div id="chartWrap">
+        <div id="chart"></div>
+        <canvas id="bmCanvas"></canvas>
+      </div>
+    </section>
+
+    <!-- right sidebar -->
+    <aside class="sidebar">
+      <!-- order ticket -->
+      <div class="panel ticket">
+        <div class="panel-title">ORDER TICKET</div>
+        <div class="qty-row">
+          <span class="lbl">QTY</span>
+          <button class="qbtn" id="qtyMinus">−</button>
+          <input id="qty" type="number" value="1" min="1">
+          <button class="qbtn" id="qtyPlus">+</button>
+        </div>
+        <div class="bracket-row">
+          <label><span>SL <em class="unitLbl">ticks</em></span><input id="slTicks" type="number" step="any" value="40"></label>
+          <label><span>TP <em class="unitLbl">ticks</em></span><input id="tpTicks" type="number" step="any" value="80"></label>
+          <label class="unit-fld"><span>UNIT</span>
+            <select id="brUnit">
+              <option value="t">ticks</option>
+              <option value="p">pts</option>
+              <option value="x">price</option>
+            </select>
+          </label>
+        </div>
+        <div class="riskbudget-row">
+          <label><span>RISK $</span><input id="riskBudget" type="number" value="300"></label>
+          <button id="btnAutoQty" class="btn-mini" title="Size qty so SL distance risks this many dollars">AUTO QTY</button>
+        </div>
+        <div class="risk-line" id="riskLine">RISK $200 / REWARD $400</div>
+        <div class="bs-row">
+          <button id="btnSell" class="btn-sell">SELL<span id="sellPx">—</span></button>
+          <button id="btnBuy" class="btn-buy">BUY<span id="buyPx">—</span></button>
+        </div>
+        <div class="lmt-row">
+          <input id="lmtPrice" type="number" step="any" placeholder="px">
+          <button id="btnLmtSell" class="btn-mini sell">SEL LMT/STP</button>
+          <button id="btnLmtBuy" class="btn-mini buy">BUY LMT/STP</button>
+        </div>
+        <p class="hint tiny">Limit/stop auto-detects: buy below market = limit, above = stop.</p>
+      </div>
+
+      <!-- order flow -->
+      <div class="panel flowpanel hidden" id="flowPanel">
+        <div class="panel-title">ORDER FLOW <span id="cvdBadge" class="cvd-badge"></span></div>
+        <div class="ladder" id="ladder"></div>
+        <div class="tape" id="tape"></div>
+        <p class="hint tiny">Click the DOM to trade: left column buys, right sells — at market price it fills instantly, away from it rests as limit/stop. Click a B/S badge to cancel. Depth is simulated (seeded at prior swings + round numbers) — learn the read, don't trust the levels.</p>
+      </div>
+
+      <!-- position -->
+      <div class="panel">
+        <div class="panel-title">POSITION</div>
+        <div id="posCard" class="pos-flat">FLAT</div>
+        <div class="pos-actions">
+          <button id="btnClose" class="btn-ghost" disabled>CLOSE</button>
+          <button id="btnReverse" class="btn-ghost" disabled>REVERSE</button>
+          <button id="btnFlatten" class="btn-ghost danger">FLATTEN ALL</button>
+        </div>
+      </div>
+
+      <!-- rules -->
+      <div class="panel rules">
+        <div class="panel-title">EVALUATION RULES</div>
+        <div class="rule">
+          <div class="rule-head"><span>PROFIT TARGET</span><span id="ruleTargetTxt">$0 / $6,000</span></div>
+          <div class="meter"><div id="meterTarget" class="fill target"></div></div>
+        </div>
+        <div class="rule">
+          <div class="rule-head"><span>TRAILING DRAWDOWN</span><span id="ruleMLLTxt">$3,000 room</span></div>
+          <div class="meter"><div id="meterMLL" class="fill dd"></div></div>
+          <div class="rule-sub" id="mllLevelTxt">liquidates at $97,000</div>
+        </div>
+        <div class="rule" id="ruleDLLWrap">
+          <div class="rule-head"><span>DAILY LOSS LIMIT</span><span id="ruleDLLTxt">$2,000 room</span></div>
+          <div class="meter"><div id="meterDLL" class="fill dd"></div></div>
+        </div>
+        <div class="rule-foot" id="attemptTxt">ATTEMPT #1</div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- bottom tabs -->
+  <section class="bottom">
+    <div class="btabs" id="btabs">
+      <button data-tab="orders" class="active">WORKING ORDERS</button>
+      <button data-tab="trades">TRADES</button>
+      <button data-tab="stats">STATS</button>
+      <button data-tab="report">REPORT CARD</button>
+      <span class="key-hints">SPACE play · → step · B buy · S sell · C close · F flatten · click chart = limit px</span>
+    </div>
+    <div class="btab-body">
+      <div id="tab-orders" class="tabpane">
+        <table class="tbl"><thead><tr><th>SIDE</th><th>TYPE</th><th>QTY</th><th>PRICE</th><th>TAG</th><th></th></tr></thead><tbody id="ordersBody"></tbody></table>
+        <div id="ordersEmpty" class="empty">no working orders</div>
+      </div>
+      <div id="tab-trades" class="tabpane hidden">
+        <table class="tbl"><thead><tr><th>#</th><th>SIDE</th><th>QTY</th><th>ENTRY</th><th>EXIT</th><th>ENTRY TIME</th><th>DURATION</th><th>P&amp;L</th></tr></thead><tbody id="tradesBody"></tbody></table>
+        <div id="tradesEmpty" class="empty">no closed trades yet</div>
+        <button id="btnExport" class="btn-ghost tiny-btn">EXPORT CSV</button>
+        <button id="btnLedger" class="btn-ghost tiny-btn">EXPORT FOR LEDGER →</button>
+      </div>
+      <div id="tab-stats" class="tabpane hidden">
+        <div class="stats-grid" id="statsGrid"></div>
+        <canvas id="eqCurve" height="90"></canvas>
+      </div>
+      <div id="tab-report" class="tabpane hidden">
+        <div id="reportBody"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- fail / pass banner -->
+  <div id="banner" class="banner hidden">
+    <div class="banner-card">
+      <h2 id="bannerTitle">ACCOUNT FAILED</h2>
+      <p id="bannerMsg"></p>
+      <div class="banner-actions">
+        <button id="btnResetAcct" class="btn-launch">RESET ACCOUNT (NEW ATTEMPT)</button>
+        <button id="btnBannerClose" class="btn-ghost">KEEP REVIEWING CHART</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
